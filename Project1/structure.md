@@ -1,5 +1,8 @@
-<img width="1683" height="825" alt="image" src="https://github.com/user-attachments/assets/bbfc8aad-b51d-41d3-9c4a-21ce1060a54d" />
-
+- <img width="1683" height="825" alt="image" src="https://github.com/user-attachments/assets/bbfc8aad-b51d-41d3-9c4a-21ce1060a54d" />
+- <img width="1651" height="819" alt="image" src="https://github.com/user-attachments/assets/4b47ecc4-d438-4dcd-9363-6f82e81746b5" />
+- <img width="1549" height="534" alt="image" src="https://github.com/user-attachments/assets/e0e93f74-2692-404c-a2f5-5108f6832b20" />
+- <img width="1568" height="951" alt="image" src="https://github.com/user-attachments/assets/a0c59c9b-a715-4567-9392-8f32185da0ce" />
+- <img width="1815" height="887" alt="image" src="https://github.com/user-attachments/assets/3afbcdc9-ea94-4b75-a988-38c05f3aeb00" />
 # how to build this project:
 A. part1 (connecting App with database)
 1. install docker-compose on your machine
