@@ -233,28 +233,2370 @@ systemctl start blog.service
 #Part3(install prometheus,grafana on server03,prometheus-node-exporter on server01,server02,server03)
 
 1. go to server01
-2. go to server02
-3. go to server03
-4. go to server04
-5. test the connection from server04 to all servers + test grafana,prometheus on it)
+```
+ssh -p 2221 admin@localhost
+apt update
+apt install -y prometheus-node-exporter
+#then test it
+curl http://localhost:9100/metrics
+#you should see
+# HELP node_cpu_seconds_total Seconds the CPUs spent in each mode.
+# TYPE node_cpu_seconds_total counter
+node_cpu_seconds_total{cpu="0",mode="idle"} ...
+node_cpu_seconds_total{cpu="0",mode="system"} ...
+node_cpu_seconds_total{cpu="0",mode="user"} ...
+#then make it accessable through ufw in order to make server03 pull these metrcis
+ufw allow from 10.10.10.13 to any port 9100 proto tcp
+#now if you go to server03 and curl it it must be there
+curl http://server01:9100/metrics
 
+```
+3. go to server02
+```
+ssh -p 2222 admin@localhost
+apt update
+apt install -y prometheus-node-exporter
+#then test it
+curl http://localhost:9100/metrics
+#you should see
+# HELP node_cpu_seconds_total Seconds the CPUs spent in each mode.
+# TYPE node_cpu_seconds_total counter
+node_cpu_seconds_total{cpu="0",mode="idle"} ...
+node_cpu_seconds_total{cpu="0",mode="system"} ...
+node_cpu_seconds_total{cpu="0",mode="user"} ...
+#then make it accessable through ufw in order to make server03 pull these metrcis
+ufw allow from 10.10.10.13 to any port 9100 proto tcp
+#now if you go to server03 and curl it it must be there
+curl http://server01:9100/metrics
 
+```
+5. go to server03
+```
+#install prometheus
+ssh -p 2223 admin@localhost
+apt update
+apt install prometheus
+#then enable it and start it 
+systemctl enable prometheus
+systemctl start prometheus
+#test it
+curl http://localhost:9090
 
-#Part4(build server4 as a backup server for all servers using rsync,openssh-server....)
+#now install grafana
+## 1. Install the prerequisites
+
+On `server03`:
+
+```bash
+apt update
+
+apt install -y apt-transport-https wget gnupg
+```
+
+You don't actually need `software-properties-common` for this installation.
+
+---
+
+## 2. Add Grafana's GPG key
+
+Run:
+
+```bash
+mkdir -p /etc/apt/keyrings
+```
+
+Then:
+
+```bash
+wget -O /etc/apt/keyrings/grafana.asc https://apt.grafana.com/gpg-full.key
+```
+
+Then:
+
+```bash
+chmod 644 /etc/apt/keyrings/grafana.asc
+```
+
+This follows Grafana's official Debian installation method. ([Grafana Labs](https://grafana.com/docs/grafana/latest/setup-grafana/installation/debian/?utm_source=chatgpt.com "Install Grafana on Debian or Ubuntu | Grafana documentation"))
+
+---
+
+## 3. Add the Grafana repository
+
+Run:
+
+```bash
+echo "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main" \
+> /etc/apt/sources.list.d/grafana.list
+```
+
+Check it:
+
+```bash
+cat /etc/apt/sources.list.d/grafana.list
+```
+
+You should see:
+
+```text
+deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main
+```
+
+---
+
+## 4. Update APT again
+
+```bash
+apt update
+```
+
+This time you should see something related to:
+
+```text
+apt.grafana.com
+```
+
+Then:
+
+```bash
+apt install -y grafana
+```
+
+---
+
+# 5. Start Grafana
+
+After installation:
+
+```bash
+systemctl enable --now grafana-server
+```
+
+Check:
+
+```bash
+systemctl status grafana-server --no-pager
+```
+
+You want:
+
+```text
+Active: active (running)
+```
+
+Then:
+
+```bash
+ss -lntp | grep 3000
+```
+
+Normally you'll see Grafana listening on port:
+
+```text
+3000
+```
+
+---
+
+# 6. Test Grafana from inside server03
+
+```bash
+curl -I http://127.0.0.1:3000
+```
+
+You should receive an HTTP response such as:
+
+```text
+HTTP/1.1 302 Found
+```
+
+or another successful Grafana response.
+
+---
+
+# 7. Access Grafana from your Arch host
+
+Your server03 IP is:
+
+```text
+10.10.10.13
+```
+
+So first check whether Grafana is listening on all interfaces:
+
+```bash
+ss -lntp | grep 3000
+```
+
+If you see:
+
+```text
+0.0.0.0:3000
+```
+
+or:
+
+```text
+*:3000
+```
+
+then from your **Arch browser** try:
+
+```text
+http://10.10.10.13:3000
+```
+
+This works with your current Docker bridge setup because your Arch host can reach the container's `10.10.10.13` address.
+
+You don't necessarily need to publish `3000:3000` through Docker for your lab.
+
+---
+
+# 8. First Grafana login
+
+The default credentials are generally:
+
+```text
+username: admin
+password: admin
+```
+
+Grafana should then ask you to change the password.
+
+# 9. Then connect Grafana → Prometheus
+
+This is the important architecture we're building:
+
+```text
+                  server03
+        ┌──────────────────────────┐
+        │                          │
+        │      Prometheus          │
+        │       :9090              │
+        │          │               │
+        │          │               │
+        │          ▼               │
+        │       Grafana            │
+        │        :3000              │
+        │                          │
+        └──────────────────────────┘
+                    │
+                    │
+              Prometheus queries
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+   Infrastructure          Application
+   :9100 metrics            :8080/metrics
+```
+
+In Grafana:
+
+**Connections → Data sources → Add data source → Prometheus**
+
+For the URL, because **Grafana and Prometheus are both running on server03**, use:
+
+```text
+http://localhost:9090
+```
+
+Then:
+
+```text
+Save & test
+```
+
+You should get something like:
+
+```text
+Successfully queried the Prometheus API.
+```
+
+### One thing before we continue
+
+Run these commands **in order**:
+
+```bash
+apt install -y apt-transport-https wget gnupg
+```
+
+```bash
+mkdir -p /etc/apt/keyrings
+wget -O /etc/apt/keyrings/grafana.asc https://apt.grafana.com/gpg-full.key
+chmod 644 /etc/apt/keyrings/grafana.asc
+```
+
+```bash
+echo "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main" \
+> /etc/apt/sources.list.d/grafana.list
+```
+
+```bash
+apt update
+apt install -y grafana
+```
+
+Then:
+
+```bash
+systemctl enable --now grafana-server
+systemctl status grafana-server --no-pager
+ss -lntp | grep 3000
+```
+
+---
+
+# Step 19 — Connect Grafana → Prometheus
+
+This direction is important:
+
+```text
+Node Exporter
+     ↓
+Prometheus
+     ↓
+Grafana
+```
+
+**Grafana does NOT need to talk directly to server01.**
+
+Grafana talks to Prometheus.
+
+Because both are inside server03:
+
+```text
+Grafana
+   |
+   | HTTP
+   ↓
+Prometheus :9090
+```
+
+So when configuring Grafana's data source, the URL is:
+
+```text
+http://localhost:9090
+```
+
+because Prometheus is running on the same server03.
+
+---
+
+# Step 20 — Open Grafana from your host
+
+Again, server03 needs:
+
+```text
+host :3000 → server03 :3000
+```
+
+So eventually:
+
+```text
+http://YOUR-HOST-IP:3000
+```
+
+will open Grafana.
+
+Don't confuse this with:
+
+```text
+server01:3000
+```
+
+Grafana belongs to **server03**.
+
+---
+
+# Step 21 — Add Prometheus as Grafana data source
+
+Once you open Grafana:
+
+```text
+Connections
+    ↓
+Data sources
+    ↓
+Add data source
+    ↓
+Prometheus
+```
+
+Set the URL to:
+
+```text
+http://localhost:9090
+```
+
+Then:
+
+```text
+Save & test
+```
+
+Grafana should tell you that the data source is working.
+
+---
+
+# Step 22 — Now let's actually query CPU
+
+This is where everything becomes real.
+
+In Grafana's Explore interface, select Prometheus.
+
+Try:
+
+```promql
+up
+```
+
+You should see your targets.
+
+Then:
+
+```promql
+node_cpu_seconds_total
+```
+
+That's raw CPU counter data.
+
+But we usually don't graph the raw counter directly.
+
+For CPU utilization, we'll use PromQL.
+
+For example:
+
+```promql
+100 * (1 - avg by (instance) (
+  rate(node_cpu_seconds_total{mode="idle"}[5m])
+))
+```
+
+Conceptually:
+
+```text
+node_cpu_seconds_total
+        ↓
+       rate()
+        ↓
+CPU seconds / second
+        ↓
+idle percentage
+        ↓
+1 - idle
+        ↓
+used CPU
+        ↓
+× 100
+```
+
+---
+
+# Step 23 — RAM
+
+Try:
+
+```promql
+100 * (
+  1 -
+  node_memory_MemAvailable_bytes
+  /
+  node_memory_MemTotal_bytes
+)
+```
+
+This gives approximately:
+
+```text
+RAM utilization %
+```
+
+---
+
+# Step 24 — Filesystem usage
+
+Try:
+
+```promql
+100 * (
+  1 -
+  node_filesystem_avail_bytes{
+    fstype!~"tmpfs|overlay"
+  }
+  /
+  node_filesystem_size_bytes{
+    fstype!~"tmpfs|overlay"
+  }
+)
+```
+
+Now you have:
+
+```text
+CPU
+RAM
+Disk
+```
+
+being collected automatically.
+
+---
+
+# Step 25 — Network traffic
+
+Receive:
+
+```promql
+rate(node_network_receive_bytes_total[5m])
+```
+
+Transmit:
+
+```promql
+rate(node_network_transmit_bytes_total[5m])
+```
+
+You can later convert bytes/sec to MB/sec:
+
+```promql
+rate(node_network_receive_bytes_total[5m]) / 1024 / 1024
+```
+
+---
+
+# Step 26 — The architecture you just built
+
+This is the important mental model:
+
+```text
+                         SERVER03
+                    ┌─────────────────┐
+                    │                 │
+                    │   Prometheus    │
+                    │      :9090      │
+                    │        ▲        │
+                    │        │        │
+                    │     scrapes     │
+                    │        │        │
+                    │        │        │
+                    │     Grafana     │
+                    │      :3000      │
+                    │                 │
+                    └─────────────────┘
+                           ▲
+                           │
+                           │ metrics
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+        │                  │                  │
+        │                  │                  │
+   SERVER01           SERVER02           SERVER04
+   :9100              :9100              :9100
+      ▲                  ▲                  ▲
+      │                  │                  │
+ Node Exporter       Node Exporter       Node Exporter
+```
+
+And the actual request flow is:
+
+```text
+Prometheus
+    |
+    | GET /metrics
+    ↓
+server01:9100
+    |
+    ↓
+Node Exporter
+    |
+    ↓
+CPU/RAM/disk/network metrics
+    |
+    ↓
+Prometheus TSDB
+    |
+    ↓
+Grafana query
+    |
+    ↓
+Graph
+```
+
+---
+7. go to server04
+```
+ssh -p 2224 admin@localhost
+apt update
+apt install -y prometheus-node-exporter
+#then test it
+curl http://localhost:9100/metrics
+#you should see
+# HELP node_cpu_seconds_total Seconds the CPUs spent in each mode.
+# TYPE node_cpu_seconds_total counter
+node_cpu_seconds_total{cpu="0",mode="idle"} ...
+node_cpu_seconds_total{cpu="0",mode="system"} ...
+node_cpu_seconds_total{cpu="0",mode="user"} ...
+#then make it accessable through ufw in order to make server03 pull these metrcis
+ufw allow from 10.10.10.13 to any port 9100 proto tcp
+#now if you go to server03 and curl it it must be there
+curl http://server01:9100/metrics
+```
+# Part4(build server4 as a backup server for all servers using rsync,openssh-server....)
+
 1.go to server01
-2.go to server02
-3.go to server03
-4.go to server04
-#Part5(automate the whole backup process (store data from the whole servers to server01 at a specific time automatically)
-1. go to server01
-2. go to server02
-3. go to server03
-4. go to server04 (to make sure everything work well)
+```
+ssh -p 2221 admin@localhost
+sudo -i
+apt update
 
-#Part6(Add retention script to remove unneccessary database files on server02)
-1. go to server04
-2. test the connection between server04,any server
 
+# 💾 Phase 14 — Backup server
+
+Now server04.
+
+We want:
+
+```text
+server01 ─────┐
+              │
+server02 ─────┼────→ server04
+              │
+server03 ─────┘
+```
+
+---
+
+```text
+                  ┌──────────────┐
+                  │   server04   │
+                  │    BACKUP    │
+                  │              │
+                  │   /backup/   │
+                  └──────▲───────┘
+                         │
+                  SSH + rsync
+                         │
+          ┌──────────────┼──────────────┐
+          │              │              │
+          │              │              │
+     server01        server02       server03
+      Nginx/app       MariaDB       Prometheus
+```
+
+We're going to build this **one server at a time**, starting with server01.
+
+---
+
+# Step 1 — Prepare server04
+
+Enter it:
+
+```bash
+docker exec -it server04 bash
+```
+
+Check:
+
+```bash
+hostname
+ip addr
+```
+
+You should have:
+
+```text
+server04
+10.10.10.14
+```
+
+Now install SSH server and rsync:
+
+```bash
+apt update
+apt install -y openssh-server rsync
+```
+
+Start SSH:
+
+```bash
+systemctl enable --now ssh
+```
+
+Check:
+
+```bash
+systemctl status ssh --no-pager
+```
+
+You want:
+
+```text
+Active: active (running)
+```
+
+And:
+
+```bash
+ss -lntp | grep :22
+```
+
+---
+
+# Step 2 — Create the backup user
+
+We don't want everything connecting as `root`.
+
+Create a dedicated account:
+
+```bash
+useradd -m -s /bin/bash backup
+```
+
+Give it a password:
+
+```bash
+passwd backup
+```
+
+For now, create the backup directories:
+
+```bash
+mkdir -p /backup/server01
+mkdir -p /backup/server02
+mkdir -p /backup/server03
+```
+
+Check:
+
+```bash
+tree /backup
+```
+
+If `tree` isn't installed:
+
+```bash
+find /backup -type d
+```
+
+You should have:
+
+```text
+/backup
+├── server01
+├── server02
+└── server03
+```
+
+Now give the `backup` user ownership:
+
+```bash
+chown -R backup:backup /backup
+```
+
+Check:
+
+```bash
+ls -ld /backup /backup/server01 /backup/server02 /backup/server03
+```
+
+You should see `backup backup`.
+
+---
+
+# Step 3 — Test SSH from server01 → server04
+
+This is important.
+
+Go to server01:
+
+```bash
+docker exec -it server01 bash
+```
+
+Try:
+
+```bash
+ssh backup@server04
+```
+
+Because Docker's internal DNS knows `server04`, it should resolve to:
+
+```text
+10.10.10.14
+```
+
+The first time you'll probably get:
+
+```text
+The authenticity of host 'server04' can't be established.
+Are you sure you want to continue connecting (yes/no/[fingerprint])?
+```
+
+Type:
+
+```text
+yes
+```
+
+Then enter the `backup` user's password.
+
+If you get:
+
+```text
+backup@server04:~$
+```
+
+**excellent.**
+
+Exit:
+
+```bash
+exit
+```
+
+---
+
+# Step 4 — Why are we doing SSH first?
+
+Because `rsync` can use SSH as its transport.
+
+Think about it like this:
+
+```text
+rsync
+  │
+  │ "I need to copy these files"
+  ▼
+SSH
+  │
+  │ encrypted connection
+  ▼
+server04
+  │
+  ▼
+/backup/
+```
+
+So when this works:
+
+```bash
+ssh backup@server04
+```
+
+we've established the communication channel.
+
+Then `rsync` uses that channel.
+
+---
+
+# Step 5 — Create SSH key authentication
+
+Right now:
+
+```text
+server01
+   ↓
+SSH
+   ↓
+"What's the password?"
+   ↓
+human enters password
+```
+
+That's useless for automation.
+
+We want:
+
+```text
+server01
+   │
+   │ private key
+   ▼
+SSH
+   │
+   │ public key
+   ▼
+server04
+   │
+   ▼
+authenticated
+```
+
+On **server01**, generate a dedicated backup key:
+
+```bash
+ssh-keygen -t ed25519 -f /root/.ssh/backup_ed25519
+```
+
+When it asks for a passphrase, for this automated lab you can press **Enter twice** to leave it empty.
+
+You'll get:
+
+```text
+/root/.ssh/backup_ed25519
+/root/.ssh/backup_ed25519.pub
+```
+
+Check:
+
+```bash
+ls -l /root/.ssh/backup_ed25519*
+```
+
+---
+
+# Step 6 — Install the public key on server04
+
+From server01:
+
+```bash
+ssh-copy-id -i /root/.ssh/backup_ed25519.pub backup@server04
+```
+
+Enter the `backup` password one last time.
+
+Now test:
+
+```bash
+ssh -i /root/.ssh/backup_ed25519 backup@server04
+```
+
+You should get in **without a password**.
+
+Exit:
+
+```bash
+exit
+```
+
+Then test explicitly:
+
+```bash
+ssh -i /root/.ssh/backup_ed25519 backup@server04 hostname
+```
+
+Expected:
+
+```text
+server04
+```
+
+This is exactly what automation needs.
+
+---
+
+# Step 7 — Now use rsync
+
+Let's back up your application from server01.
+
+First look at what we're copying:
+
+```bash
+du -sh /opt/myapp
+```
+
+Then:
+
+```bash
+ls -la /opt/myapp
+```
+
+Now run:
+
+```bash
+rsync -av \
+  -e "ssh -i /root/.ssh/backup_ed25519" \
+  /opt/myapp/ \
+  backup@server04:/backup/server01/myapp/
+```
+
+---
+Breakdown of the Command
+
+- **`rsync`**: The utility used to synchronize files locally or remotely, copying only the changes made to files to save time and bandwidth.
+- **`-av`**: Combines two crucial flags:
+    - **`-a` (Archive)**: Preserves file permissions, ownerships, timestamps, and symbolic links so the backup is identical to the original.
+    - **`-v` (Verbose)**: Displays the names of the files being transferred on your screen in real time.
+- **`-e "ssh -i /root/.ssh/backup_ed25519"`**: Specifies a custom remote shell command.
+    - It tells rsync to connect using **SSH**.
+    - The `-i` flag forces it to use a specific, highly secure private cryptographic key (`backup_ed25519`) belonging to the root user for authentication, bypassing the need for a typed password.
+- **`/opt/myapp/`**: The **Source directory**. The trailing slash means "copy the _contents_ of this folder."
+- **`backup@server04:/backup/server01/myapp/`**: The **Destination**.
+    - Connects as the user **`backup`** on the remote machine named **`server04`**.
+    - Places the files into the folder directory **`/backup/server01/myapp/`**.
+---
+Let's understand this:
+
+```text
+rsync
+```
+
+Copy/synchronize files.
+
+```text
+-a
+```
+
+Archive mode. Preserves important attributes such as permissions, ownership, timestamps, and directory structure.
+
+```text
+-v
+```
+
+Verbose — show what it's doing.
+
+```text
+-e "ssh -i ..."
+```
+
+Tell rsync to use SSH with our dedicated key.
+
+```text
+/opt/myapp/
+```
+
+**source**
+
+```text
+backup@server04:/backup/server01/myapp/
+```
+
+**destination**
+
+---
+
+# Step 8 — Verify on server04
+
+Enter:
+
+```bash
+docker exec -it server04 bash
+```
+
+Then:
+
+```bash
+find /backup/server01/myapp -maxdepth 3 -type f
+```
+
+Compare:
+
+```bash
+du -sh /backup/server01/myapp
+```
+
+with:
+
+```bash
+du -sh /opt/myapp
+```
+
+The contents should correspond.
+
+---
+
+# Step 9 — Now understand what rsync actually does
+
+Suppose server01 has:
+
+```text
+/opt/myapp/
+├── app.py
+├── config.py
+├── templates/
+│   └── index.html
+└── logs/
+    └── app.log
+```
+
+First backup:
+
+```text
+server01                     server04
+
+/opt/myapp                   /backup/server01/myapp
+     │                               │
+     ├── app.py ────────────────────► app.py
+     ├── config.py ─────────────────► config.py
+     ├── templates/ ────────────────► templates/
+     └── logs/ ─────────────────────► logs/
+```
+
+Now modify:
+
+```bash
+echo "# backup test" >> /opt/myapp/app.py
+```
+
+Run rsync again:
+
+```bash
+rsync -av \
+  -e "ssh -i /root/.ssh/backup_ed25519" \
+  /opt/myapp/ \
+  backup@server04:/backup/server01/myapp/
+```
+
+Rsync doesn't blindly copy everything again.
+
+It determines what changed and synchronizes the destination.
+
+**That's why rsync is useful for recurring backups.**
+
+---
+
+# Step 10 — IMPORTANT: database backup is different
+
+Now let's move to **server02**.
+
+Don't do this:
+
+```bash
+rsync /var/lib/mysql/ ...
+```
+
+while MariaDB is running and call it a backup.
+
+Instead:
+
+```text
+MariaDB
+   │
+   ▼
+mariadb-dump
+   │
+   ▼
+myapp.sql
+   │
+   ▼
+rsync
+   │
+   ▼
+server04
+```
+
+First check server02:
+
+```bash
+docker exec -it server02 bash
+```
+
+Check MariaDB:
+
+```bash
+systemctl status mariadb --no-pager
+```
+
+Then:
+
+```bash
+mariadb -u root -p
+```
+
+Find your database:
+
+```sql
+SHOW DATABASES;
+```
+
+Suppose it's:
+
+```text
+myapp
+```
+
+Exit:
+
+```sql
+exit
+```
+
+Then create the dump:
+
+```bash
+mariadb-dump -u root -p myapp > /tmp/myapp.sql
+
+```
+
+---
+## Breakdown of the Command
+
+- `mariadb-dump`: The utility tool used to export database structures and table data into SQL text files. _(Note: On older systems, this command is called `mysqldump`)_.
+- `-u root`: Specifies the database user account to log in with, which is `root` (the administrative superuser with full access).
+- `-p`: Tells the tool to prompt you to type the password for that user. Do not type your password directly after the `-p` here; hit enter, and a secure hidden password prompt will appear.
+- `myapp`: The exact name of the database you want to export.
+- `>`: The command-line redirection operator. Instead of printing the database data onto your terminal screen, it redirects the output into a file.
+- `/tmp/myapp.sql`: The destination path and filename where the backup will be saved. The `.sql` extension indicates it contains plain-text SQL statements.
+
+---
+
+Enter the database password.
+
+Check:
+
+```bash
+ls -lh /tmp/myapp.sql
+```
+
+And inspect the beginning:
+
+```bash
+head -n 20 /tmp/myapp.sql
+```
+
+You'll see SQL statements representing the database.
+
+---
+
+# Step 11 — Send the database dump to server04
+
+On server02, we need an SSH key there too.
+
+Generate:
+
+```bash
+ssh-keygen -t ed25519 -f /root/.ssh/backup_ed25519
+```
+
+Then:
+	
+```bash
+ssh-copy-id -i /root/.ssh/backup_ed25519.pub backup@server04
+```
+
+Test:
+
+```bash
+ssh -i /root/.ssh/backup_ed25519 backup@server04 hostname
+```
+
+Then:
+
+```bash
+rsync -av \
+  -e "ssh -i /root/.ssh/backup_ed25519" \
+  /tmp/myapp.sql \
+  backup@server04:/backup/server02/
+```
+
+On server04:
+
+```bash
+ls -lh /backup/server02/
+```
+
+You should have:
+
+```text
+myapp.sql
+```
+
+---
+
+# Step 12 — server03 configuration backup
+
+For server03, we care about your monitoring configuration.
+
+You currently have:
+
+```text
+/etc/prometheus/
+/etc/grafana/
+```
+
+On server03:
+
+```bash
+docker exec -it server03 bash
+```
+
+Check:
+
+```bash
+ls -la /etc/prometheus
+```
+
+and:
+
+```bash
+ls -la /etc/grafana
+```
+
+Then generate its SSH key:
+
+```bash
+ssh-keygen -t ed25519 -f /root/.ssh/backup_ed25519
+```
+
+Install it:
+
+```bash
+ssh-copy-id -i /root/.ssh/backup_ed25519.pub backup@server04
+```
+
+Then:
+
+```bash
+rsync -av \
+  -e "ssh -i /root/.ssh/backup_ed25519" \
+  /etc/prometheus/ \
+  backup@server04:/backup/server03/prometheus/
+```
+
+And:
+
+```bash
+rsync -av \
+  -e "ssh -i /root/.ssh/backup_ed25519" \
+  /etc/grafana/ \
+  backup@server04:/backup/server03/grafana/
+```
+
+
+
+#Part5(automate the whole backup process (store data from the whole servers to server01 at a specific time automatically)+(Add retention script to remove unneccessary database files on server02)
+
+
+We already have:
+
+```text
+server01 → server04
+server02 → server04
+server03 → server04
+```
+
+The clean design is:
+
+```text
+server01
+ └── /opt/myapp
+ └── /etc/nginx
+ └── /etc/systemd/system/blog.service
+          │
+          │ rsync/ssh
+          ▼
+server04
+ └── /backup/server01/
+
+server02
+ └── MariaDB dump
+          │
+          │ rsync/ssh
+          ▼
+server04
+ └── /backup/server02/
+
+server03
+ └── /etc/prometheus
+ └── /etc/grafana
+          │
+          │ rsync/ssh
+          ▼
+server04
+ └── /backup/server03/
+```
+
+We are going to make **one backup script on each source server**.
+
+---
+
+## 7.1 server01 backup script
+
+Enter server01:
+
+```bash
+docker exec -it server01 bash
+```
+
+Create the script:
+
+```bash
+nano /usr/local/bin/backup-server01.sh
+```
+
+Put this inside:
+
+```bash
+#!/bin/bash
+
+set -e
+
+BACKUP_SERVER="server04"
+BACKUP_USER="backup"
+SSH_KEY="/root/.ssh/backup_ed25519"
+
+echo "======================================"
+echo " Starting server01 backup"
+echo "======================================"
+
+echo "[1/3] Backing up /opt/myapp..."
+
+rsync -av \
+    -e "ssh -i ${SSH_KEY}" \
+    /opt/myapp/ \
+    ${BACKUP_USER}@${BACKUP_SERVER}:/backup/server01/myapp/
+
+echo "[2/3] Backing up nginx configuration..."
+
+rsync -av \
+    -e "ssh -i ${SSH_KEY}" \
+    /etc/nginx/ \
+    ${BACKUP_USER}@${BACKUP_SERVER}:/backup/server01/nginx/
+
+echo "[3/3] Backing up blog.service..."
+
+rsync -av \
+    -e "ssh -i ${SSH_KEY}" \
+    /etc/systemd/system/blog.service \
+    ${BACKUP_USER}@${BACKUP_SERVER}:/backup/server01/systemd/
+
+echo "======================================"
+echo " server01 backup completed"
+echo "======================================"
+```
+
+Save:
+
+```text
+CTRL+O
+ENTER
+CTRL+X
+```
+
+Make executable:
+
+```bash
+chmod +x /usr/local/bin/backup-server01.sh
+```
+
+Test it manually:
+
+```bash
+/usr/local/bin/backup-server01.sh
+```
+
+You should see rsync transferring files.
+
+---
+
+## 7.2 Check server04
+
+Open another shell or exit server01:
+
+```bash
+exit
+```
+
+Enter server04:
+
+```bash
+docker exec -it server04 bash
+```
+
+Check:
+
+```bash
+find /backup/server01 -type f
+```
+
+You should see things under:
+
+```text
+/backup/server01/myapp/
+/backup/server01/nginx/
+/backup/server01/systemd/blog.service
+```
+
+Check size:
+
+```bash
+du -sh /backup/server01
+```
+
+---
+
+# 7.3 server02 — MariaDB backup script
+
+Now leave server04:
+
+```bash
+exit
+```
+
+Enter server02:
+
+```bash
+docker exec -it server02 bash
+```
+
+First verify MariaDB:
+
+```bash
+systemctl status mariadb --no-pager
+```
+
+Find your databases:
+
+```bash
+mariadb -u root -p -e "SHOW DATABASES;"
+```
+
+Suppose your application database is called:
+
+```text
+myapp
+```
+
+We'll use that.
+
+Create the script:
+
+```bash
+nano /usr/local/bin/backup-server02.sh
+```
+
+Put:
+
+```bash
+#!/bin/bash
+
+set -e
+
+BACKUP_SERVER="server04"
+BACKUP_USER="backup"
+SSH_KEY="/root/.ssh/backup_ed25519"
+
+DB_NAME="myapp"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+DUMP_FILE="/tmp/${DB_NAME}-${TIMESTAMP}.sql"
+
+echo "======================================"
+echo " Starting server02 backup"
+echo "======================================"
+
+echo "[1/3] Creating MariaDB dump..."
+
+mariadb-dump \
+    -u root \
+    -p \
+    "$DB_NAME" > "$DUMP_FILE"
+
+echo "[2/3] Sending dump to server04..."
+
+rsync -av \
+    -e "ssh -i ${SSH_KEY}" \
+    "$DUMP_FILE" \
+    ${BACKUP_USER}@${BACKUP_SERVER}:/backup/server02/
+
+echo "[3/3] Removing temporary dump..."
+
+rm -f "$DUMP_FILE"
+
+echo "======================================"
+echo " server02 backup completed"
+echo "======================================"
+```
+
+Save and:
+
+```bash
+chmod +x /usr/local/bin/backup-server02.sh
+```
+
+Run:
+
+```bash
+/usr/local/bin/backup-server02.sh
+```
+
+It will ask:
+
+```text
+Enter password:   (as we didn't put any password for mariadb so click enter and it will be done)
+```
+
+Enter your MariaDB root password.
+
+Then check server04:
+
+```bash
+exit
+```
+
+```bash
+docker exec -it server04 bash
+```
+
+Run:
+
+```bash
+ls -lh /backup/server02/
+```
+
+You'll have something like:
+
+```text
+myapp-2026-09-02_20-35-10.sql
+```
+
+
+---
+
+# 7.4 server03 — Prometheus + Grafana backup
+
+Enter server03:
+
+```bash
+exit
+```
+
+```bash
+docker exec -it server03 bash
+```
+
+Create:
+
+```bash
+nano /usr/local/bin/backup-server03.sh
+```
+
+Put:
+
+```bash
+#!/bin/bash
+
+set -e
+
+BACKUP_SERVER="server04"
+BACKUP_USER="backup"
+SSH_KEY="/root/.ssh/backup_ed25519"
+
+echo "======================================"
+echo " Starting server03 backup"
+echo "======================================"
+
+echo "[1/2] Backing up Prometheus..."
+
+rsync -av \
+    -e "ssh -i ${SSH_KEY}" \
+    /etc/prometheus/ \
+    ${BACKUP_USER}@${BACKUP_SERVER}:/backup/server03/prometheus/
+
+echo "[2/2] Backing up Grafana..."
+
+rsync -av \
+    -e "ssh -i ${SSH_KEY}" \
+    /etc/grafana/ \
+    ${BACKUP_USER}@${BACKUP_SERVER}:/backup/server03/grafana/
+
+echo "======================================"
+echo " server03 backup completed"
+echo "======================================"
+```
+**`set -e`** =instructs the shell to **immediately exit if any command fails**== (returns a non-zero exit status)
+
+Save and:
+
+```bash
+chmod +x /usr/local/bin/backup-server03.sh
+```
+
+Run:
+
+```bash
+/usr/local/bin/backup-server03.sh
+```
+
+Then verify:
+
+```bash
+exit
+```
+
+```bash
+docker exec -it server04 bash
+```
+
+```bash
+find /backup -type f
+```
+
+At this point you should have something resembling:
+
+```text
+/backup/server01/myapp/...
+/backup/server01/nginx/...
+/backup/server01/systemd/blog.service
+
+/backup/server02/myapp-2026-09-02_20-35-10.sql
+
+/backup/server03/prometheus/...
+/backup/server03/grafana/...
+```
+
+---
+
+# 8. Build systemd Timers
+
+Now comes the important part.
+
+Instead of you manually running:
+
+```bash
+/usr/local/bin/backup-server01.sh
+```
+
+we make **systemd automatically execute it**.
+
+The structure is:
+
+```text
+backup-server01.timer
+        │
+        │ triggers
+        ▼
+backup-server01.service
+        │
+        │ executes
+        ▼
+backup-server01.sh
+```
+
+We'll configure all three source servers.
+
+---
+
+# 8.1 server01 systemd service
+
+Enter server01:
+
+```bash
+exit
+```
+
+```bash
+docker exec -it server01 bash
+```
+
+Create:
+
+```bash
+nano /etc/systemd/system/backup-server01.service
+```
+
+Put:
+
+```ini
+[Unit]
+Description=Backup server01 to server04
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-server01.sh
+```
+
+Save.
+
+---
+Line-by-Line Breakdown
+
+- **`After=network-online.target`**
+    - **Meaning:** Sets the **boot order**.
+    - **Explanation:** This tells systemd to wait until the network is fully up and running _before_ it attempts to start this backup service. It prevents the backup from running too early and failing due to a lack of network connection.
+- **`Wants=network-online.target`**
+    - **Meaning:** Sets a **weak dependency**.
+    - **Explanation:** This tells systemd that the backup script _desires_ the network to be online. When you start this backup service, systemd will automatically try to activate the network target. However, because it is a weak dependency, if the network fails to start, the backup script will still attempt to run anyway.
+- **`Type=oneshot`**
+    - **Meaning:** Defines the **process lifetime**.
+    - **Explanation:** This is used for scripts that do a specific job and then exit (like a backup). Systemd will start the script, wait patiently for it to finish completely, and only then mark the service as "done."
+
+---
+
+❓ What is the difference between `After=` and `Wants=`?
+
+It is easy to confuse these two, but they control different things:
+
+- **`Wants=` controls _WHAT_**: "I need this other service to turn on too."
+- **`After=` controls _WHEN_**: "Don't start me until that other service is completely ready."
+
+
+---
+
+Now timer:
+
+```bash
+nano /etc/systemd/system/backup-server01.timer
+```
+
+Put:
+
+```ini
+[Unit]
+Description=Run server01 backup daily
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Save.
+Here is exactly how systemd reads it:
+
+- `*-*-*` → Every day
+- `*:` → Every hour
+- `*:` → Every minute
+- `00` → On the 00th second
+
+⏱️ The Timeline of Execution
+
+Your script will automatically trigger on this exact schedule:
+
+- 20:10:**00**
+- 20:11:**00**
+- 20:12:**00**
+- 20:13:**00**
+
+---
+- **`OnCalendar=`**
+    - **Meaning**: Defines a specific calendar date and time schedule.
+    - **The Format**: `DayOfWeek Year-Month-Day Hour:Minute:Second`.
+    - **Your line `*-*-* 02:00:00`**: Asterisks mean "every." This runs every single year, every month, and every day at exactly **2:00 AM**.
+- **`Persistent=true`**
+    - **Meaning**: Acts as a catch-up alarm clock.
+    - **Explanation**: If your server is turned off or asleep at 2:00 AM when the backup is supposed to run, systemd remembers. As soon as you turn the server back on, systemd will immediately trigger the backup to catch up. Without this, the missed backup is skipped entirely.
+- **`WantedBy=timers.target`**
+    - **Meaning**: Tells systemd when to activate this timer.
+    - **Explanation**: This ensures that when your Linux server boots up and loads its normal background timers, your backup timer is automatically turned on and activated too.
+
+---
+
+🕒 How to Customize `OnCalendar` (Different Examples)
+
+You can easily change the schedule by replacing `*-*-* 02:00:00` with any of these options:
+
+Simple Short Words
+
+- `OnCalendar=daily` — Runs every day at midnight (12:00 AM).
+- `OnCalendar=weekly` — Runs every Sunday at midnight.
+- `OnCalendar=hourly` — Runs at the start of every hour (e.g., 1:00, 2:00, 3:00).
+
+Custom Specific Times
+
+- `OnCalendar=*-*-* 18:30:00` — Runs every day at **6:30 PM** (uses 24-hour clock).
+- `OnCalendar=Mon..Fri 04:00:00` — Runs at 4:00 AM, but **only on weekdays** (Monday through Friday).
+- `OnCalendar=*-*-01 00:00:00` — Runs at midnight on the **1st day of every month**.
+- 1. Did you want to run it every minute?
+
+If you meant "Run on any hour, at minute 01, on any second," the correct syntax uses colons:
+
+- `OnCalendar=*-*-* *:01:*`
+
+
+----
+
+Reload systemd:
+
+```bash
+systemctl daemon-reload
+```
+
+Enable timer:
+
+```bash
+systemctl enable --now backup-server01.timer
+```
+
+Check:
+
+```bash
+systemctl status backup-server01.timer --no-pager
+```
+
+And:
+
+```bash
+systemctl list-timers --all | grep backup
+```
+
+You'll see a scheduled execution time.
+
+---
+
+# 8.2 Don't wait until 2 AM — test it now
+
+We don't want to sit around waiting.
+
+Run the service directly:
+
+```bash
+systemctl start backup-server01.service
+```
+
+Check:
+
+```bash
+systemctl status backup-server01.service --no-pager
+```
+
+Check logs:
+
+```bash
+journalctl -u backup-server01.service
+```
+
+The important concept:
+
+```text
+timer
+  ↓
+service
+  ↓
+script
+  ↓
+rsync
+  ↓
+server04
+```
+
+---
+
+# 8.3 server02 timer
+
+Enter server02:
+
+```bash
+exit
+```
+
+```bash
+docker exec -it server02 bash
+```
+
+Create:
+
+```bash
+nano /etc/systemd/system/backup-server02.service
+```
+
+```ini
+[Unit]
+Description=Backup MariaDB from server02 to server04
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-server02.sh
+```
+
+Create timer:
+
+```bash
+nano /etc/systemd/system/backup-server02.timer
+```
+
+```ini
+[Unit]
+Description=Run server02 database backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now backup-server02.timer
+```
+
+Check:
+
+```bash
+systemctl list-timers --all | grep backup
+```
+
+Test:
+
+```bash
+systemctl start backup-server02.service
+```
+
+Check:
+
+```bash
+journalctl -u backup-server02.service --no-pager
+```
+
+---
+
+# 8.4 server03 timer
+
+Enter:
+
+```bash
+exit
+```
+
+```bash
+docker exec -it server03 bash
+```
+
+Create:
+
+```bash
+nano /etc/systemd/system/backup-server03.service
+```
+
+```ini
+[Unit]
+Description=Backup monitoring configuration from server03
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-server03.sh
+```
+
+Timer:
+
+```bash
+nano /etc/systemd/system/backup-server03.timer
+```
+
+```ini
+[Unit]
+Description=Run server03 backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now backup-server03.timer
+```
+
+Check:
+
+```bash
+systemctl list-timers --all | grep backup
+```
+
+Test:
+
+```bash
+systemctl start backup-server03.service
+```
+
+Logs:
+
+```bash
+journalctl -u backup-server03.service --no-pager
+```
+
+---
+
+# 9. Add Retention
+
+Now imagine we run a database backup every day.
+
+After a year:
+
+```text
+365 SQL files
+```
+
+That can become a problem.
+
+We'll tell server04:
+
+> Keep the newest 7 database backups and delete older ones.
+
+Enter server04:
+
+```bash
+docker exec -it server04 bash
+```
+
+Create retention script:
+
+```bash
+nano /usr/local/bin/backup-retention.sh
+```
+
+Put:
+
+```bash
+#!/bin/bash
+
+set -e
+
+echo "======================================"
+echo " Running backup retention"
+echo "======================================"
+
+echo "[1/3] Cleaning old server02 database backups..."
+
+find /backup/server02 \
+    -type f \
+    -name "myapp-*.sql" \
+    -printf '%T@ %p\n' |
+sort -nr |
+tail -n +8 |
+cut -d' ' -f2- |
+xargs -r rm -f
+
+echo "[2/3] Checking remaining database backups..."
+
+ls -lh /backup/server02/
+
+echo "[3/3] Retention completed"
+
+echo "======================================"
+```
+
+Save:
+
+```bash
+chmod +x /usr/local/bin/backup-retention.sh
+```
+
+Test it:
+
+```bash
+/usr/local/bin/backup-retention.sh
+```
+
+The logic is:
+
+```text
+sort newest → oldest
+       ↓
+keep first 7
+       ↓
+everything after #7
+       ↓
+delete
+```
+---
+
+## 1. `-printf '%T@ %p\n'` (The Time Stapper)
+
+By default, the `find` command only outputs file names. It does not show how old they are. This command forces `find` to print a special timestamp code right in front of each file name.
+
+- `%T@`: Prints the modification time of the file in "Unix time" (the total number of seconds elapsed since January 1, 1970). Bigger numbers mean the file is newer.
+- `%p`: Prints the full path of the file.
+- `\n`: Puts every file on a brand new line.
+
+## Example Output:
+
+`find` generates a random, unsorted list that looks like this:
+
+```text
+1785000003 /backup/server02/myapp-monday.sql
+1785000001 /backup/server02/myapp-saturday.sql
+1785000009 /backup/server02/myapp-today.sql
+1785000002 /backup/server02/myapp-sunday.sql
+```
+
+---
+
+## 2. `sort -nr` (The Organizer)
+
+Computers read text lists from top to bottom. We need the newest files at the top.
+
+- `-n`: Tells the system to sort numerically (evaluating the Unix time numbers, instead of sorting alphabetically).
+- `-r`: Tells the system to reverse the order (highest numbers go to the top, lowest numbers go to the bottom).
+
+## Example Output (After Sorting):
+
+Now the list is perfectly organized from newest to oldest:
+
+```text
+1785000009 /backup/server02/myapp-today.sql      <-- Newest (Highest Number)
+1785000008 /backup/server02/myapp-yesterday.sql
+1785000007 /backup/server02/myapp-wednesday.sql
+1785000006 /backup/server02/myapp-tuesday.sql
+1785000005 /backup/server02/myapp-monday.sql
+1785000004 /backup/server02/myapp-sunday.sql
+1785000003 /backup/server02/myapp-saturday.sql    <-- 7th Newest File
+1785000002 /backup/server02/myapp-friday.sql      <-- Line 8 (Old file)
+1785000001 /backup/server02/myapp-thursday.sql    <-- Line 9 (Oldest file)
+```
+
+---
+
+## 3. `tail -n +8` (The Bodyguard)
+
+The `tail` command is normally used to look at the very end of a document. However, when you use the special `+` sign, its behavior changes completely.
+
+- `-n +8`: This means "Start outputting from line number 8, and show everything after it." It completely hides and protects lines 1 through 7.
+
+## Example Output (After Tail):
+
+Because lines 1 through 7 (your 7 newest backups) were hidden, the output becomes:
+
+```text
+1785000002 /backup/server02/myapp-friday.sql
+1785000001 /backup/server02/myapp-thursday.sql
+```
+
+Only these old, expired backup lines are allowed to pass through to the next command to be cut and deleted.
+
+---
+Here is how `cut` and `xargs` work using visual examples.
+
+Imagine your script has already found, timestamped, and sorted your files. The text being sent to `cut` looks like this:
+
+```text
+1711972800 /backup/server02/myapp-oldest.sql
+1711976400 /backup/server02/myapp-ancient.sql
+```
+
+---
+
+## 1. Understanding `cut -d' ' -f2-`
+
+The `cut` command slices up text lines like a knife, using a specific character as a divider.
+
+- `-d' '` (Delimiter): This tells `cut` to split the text everywhere it sees a space.
+- `-f2-` (Fields): This tells `cut` to throw away the 1st field (the timestamp) and keep everything from the 2nd field to the end of the line (the file path).
+
+## Visual Example:
+
+```text
+ Field 1     [Space]   Field 2 (and onward)
+=========             ====================================
+1711972800      │     /backup/server02/myapp-oldest.sql
+1711976400      │     /backup/server02/myapp-ancient.sql
+                ▼
+          (Cut happens here)
+```
+
+The Output after `cut`:
+
+```text
+/backup/server02/myapp-oldest.sql
+/backup/server02/myapp-ancient.sql
+```
+
+Now, you have a clean list of raw file paths with no numbers in front of them.
+
+---
+
+## 2. Understanding `xargs -r rm -f`
+
+Commands like `rm` (remove) cannot read a list of text directly from a pipe. They need file names typed right next to them (e.g., `rm file1.sql file2.sql`).
+
+`xargs` is a bridge. It takes the text list from `cut` and turns it into arguments for the `rm` command.
+
+- `-r` (No run if empty): If there are fewer than 7 backups total, `cut` will output nothing. The `-r` flag tells `xargs` "if the list is empty, stop and do not run the delete command."
+- `rm -f`: The command used to force-delete files without asking for permission.
+
+## Visual Example:
+
+`xargs` grabs the lines of text and rewires them into a single command line:
+
+```text
+Input text list:
+  /backup/server02/myapp-oldest.sql
+  /backup/server02/myapp-ancient.sql
+
+        │
+        ▼ (xargs converts this list into a single line)
+
+Executed command:
+  rm -f /backup/server02/myapp-oldest.sql /backup/server02/myapp-ancient.sql
+```
+
+
+---
+
+# 9.1 Create retention systemd service
+
+Still on server04:
+
+```bash
+nano /etc/systemd/system/backup-retention.service
+```
+
+Put:
+
+```ini
+[Unit]
+Description=Clean old backup files
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-retention.sh
+```
+
+Timer:
+
+```bash
+nano /etc/systemd/system/backup-retention.timer
+```
+
+Put:
+
+```ini
+[Unit]
+Description=Run backup retention daily
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then:
+
+```bash
+systemctl daemon-reload
+```
+
+Enable:
+
+```bash
+systemctl enable --now backup-retention.timer
+```
+
+Check:
+
+```bash
+systemctl list-timers --all | grep backup
+```
+
+Test manually:
+
+```bash
+systemctl start backup-retention.service
+```
+
+And:
+
+```bash
+journalctl -u backup-retention.service --no-pager
+```
 
 #good luck we finished the project (if you have any question just message me over my linkdin: https://www.linkedin.com/in/abdulrahman-qasim-19b6b028b/)
 
